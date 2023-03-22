@@ -1,0 +1,10 @@
+{
+    "description": {
+        "en": "SG MTD Analyzer",
+        "ru": "СГ Анализатор MTD файлов"
+    }, 
+    "runtime": "windows", 
+    "name": "sgmtd",
+    "plugin_path": "./sgmtd_plugin",
+    "version": "0.1.0.0006"
+}
