@@ -2,8 +2,6 @@
 """ Модуль плагина SG MTD Analyzer. """
 import os
 import os.path
-import json
-
 from typing import Any, Optional, List
 
 from components import ui_models
@@ -60,9 +58,7 @@ class MtdAnalyzer(BaseComponent):
         """ Имя компоненты. """
         return self.__class__.__name__
 
-    def get_mtd_info(self):
-        """ MTD. Вывод краткой структуры репозиториев """
-
+    def _get_mtd_info(self):
         config_dict = load_yaml_from_file(self.config_path)
         services_config = config_dict.get('services_config', {})
         dds_config = services_config.get('DevelopmentStudio', {})
@@ -78,18 +74,30 @@ class MtdAnalyzer(BaseComponent):
         # получение путей до репозиториев
         repositories = dds_config.get("REPOSITORIES", {}).get("repository", {})
         response = []
+        archive = []
         for repo in repositories:
-            items, archive = mtd.dir_walk(os.path.join(git_root_directory, repo.get('@folderName')))
-            #todo: обработка архивов
+            items, arch = mtd.dir_walk(os.path.join(git_root_directory, repo.get('@folderName')))
+            # todo: обработка архивов
             response += items.values()
+            archive += arch
 
+
+        # hack - получение родителей
+        items, arch = mtd.dir_walk(os.path.join(git_root_directory, '_platform'))
+        response += items.values()
+        archive += arch
+
+        return response, archive
+
+    def get_mtd_info(self):
+        """ MTD. Вывод краткой структуры репозиториев """
+        response, archive = self._get_mtd_info()
         return response
 
     def save_mtd_info(self, filename: str):
         """ MTD. Сохранить данные в Excel. Параметр - имя файла.xlsx """
-        items = self.get_mtd_info()
-        mtd.render_excel(items, filename)
-
+        items, archive = self._get_mtd_info()
+        mtd.render_excel(items, archive, filename)
 
 
 def init_plugin() -> None:
