@@ -272,12 +272,7 @@ class Property(BasicMTD):
 
     def SQLColumn(self):
         # TODO: некорректно для коллекций
-        if self.RootEntity and self.RootEntity.RootParent == self.RootEntity:
-            return self.Code if self.Code else self.Name
-        elif self.RootEntity:
-            return "{}_{}_{}".format(self.Code if self.Code else self.Name,
-                                     self.RootEntity.Module.Code,
-                                     self.RootEntity.Module.CompanyCode)
+        return self.Code if self.Code else self.Name
 
     def ExcelHeaders(self) -> List[str]:
         return ['Тип', 'Код компании', 'Модуль', 'Тип сущности', 'Название', 'Свойство', 'Имя[En]', 'Имя[Ru]', 'Guid', 'SQL столбец', 'Путь']
