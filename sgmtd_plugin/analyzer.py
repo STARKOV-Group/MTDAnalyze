@@ -9,8 +9,8 @@ from components.base_component import BaseComponent
 from components.component_manager import ComponentManager, component
 from py_common.logger import log
 from sungero_deploy.instance_service import InstanceService
+from sungero_deploy.scripts_config import get_config_model
 from sungero_deploy import scripts_config
-from common_plugin.yaml_tools import load_yaml_from_file, is_jinja_expression
 from jinja2 import Template, StrictUndefined
 from . import xlsxwriter
 from . import mtd
@@ -58,34 +58,28 @@ class MtdAnalyzer(BaseComponent):
         """ Имя компоненты. """
         return self.__class__.__name__
 
-    def _get_mtd_info(self):
-        config_dict = load_yaml_from_file(self.config_path)
-        services_config = config_dict.get('services_config', {})
-        dds_config = services_config.get('DevelopmentStudio', {})
-
-        # рендер переменных из шаблона
-        variables_dict = config_dict.get('variables', {})
+    def _get_repo_list(self):
+        self.config = get_config_model(self.config_path)
+        dds_config = self.config.services_config.get('DevelopmentStudio', {})
         git_root_directory = dds_config.get('GIT_ROOT_DIRECTORY')
-        if is_jinja_expression(git_root_directory):
-            tm = Template(git_root_directory, undefined=StrictUndefined)
-            tm.environment.globals['getenv'] = os.getenv
-            git_root_directory = tm.render(variables_dict)
 
         # получение путей до репозиториев
         repositories = dds_config.get("REPOSITORIES", {}).get("repository", {})
+        repo_list = []
+        for repo in repositories:
+            repo_list.append({'type': repo.get('@solutionType'), 'path': os.path.join(git_root_directory, repo.get('@folderName'))})
+
+        # hack - получение родителей из платформы
+        repo_list.append({'type': 'Base', 'path': os.path.join(git_root_directory, '_platform')})
+        return repo_list
+
+    def _get_mtd_info(self):
         response = []
         archive = []
-        for repo in repositories:
-            items, arch = mtd.dir_walk(os.path.join(git_root_directory, repo.get('@folderName')))
-            # todo: обработка архивов
+        for repo in self._get_repo_list():
+            items, arch = mtd.dir_walk(repo.get('path'))
             response += items.values()
             archive += arch
-
-
-        # hack - получение родителей
-        items, arch = mtd.dir_walk(os.path.join(git_root_directory, '_platform'))
-        response += items.values()
-        archive += arch
 
         return response, archive
 
@@ -98,6 +92,10 @@ class MtdAnalyzer(BaseComponent):
         """ MTD. Сохранить данные в Excel. Параметр - имя файла.xlsx """
         items, archive = self._get_mtd_info()
         mtd.render_excel(items, archive, filename)
+
+    def gen_package(self, filename: str):
+        """ MTD. Создать package.xml для DDS. Параметр - имя файла.xml """
+        mtd.gen_package(filename, self._get_repo_list())
 
 
 def init_plugin() -> None:

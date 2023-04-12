@@ -1,6 +1,6 @@
 import os
 import json
-from codecs import BOM_UTF8
+import sys
 from typing import Any, Optional, List, Dict
 import xml.etree.ElementTree as ET
 
@@ -80,7 +80,7 @@ class BasicMTD:
     NameGuid = ""
     path = ""
 
-    def __init__(self, json_str, en_res=None, ru_res=None):
+    def __init__(self, json_str, en_res=None, ru_res=None, root_entity=None):
         self.json = {}
         self.resx = {'en': en_res if en_res else {}, 'ru': ru_res if ru_res else {}}
         if isinstance(json_str, str):
@@ -89,6 +89,7 @@ class BasicMTD:
             self.json = json_str
 
         self.NameGuid = self.json.get("NameGuid")
+        self.RootEntity = root_entity
         Singleton().entity[self.NameGuid] = self
 
         self.parse()
@@ -192,8 +193,7 @@ class BaseMTD(BasicMTD):
 
 class Action(BasicMTD):
     def __init__(self, item: dict, root_entity):
-        self.RootEntity = root_entity
-        super().__init__(item)
+        super().__init__(item, root_entity=root_entity)
 
     def ExcelHeaders(self) -> List[str]:
         return ['Тип', 'Код компании', 'Модуль', 'Тип сущности', 'Название', 'Действие', 'Guid', 'Путь']
@@ -220,7 +220,7 @@ class Control(BasicMTD):
         self._parent = None
         self.RootEntity = root_entity
         Singleton().control[self.NameGuid] = self
-        super().__init__(item)
+        super().__init__(item, root_entity=root_entity)
 
     def ExcelHeaders(self) -> List[str]:
         return ['Тип', 'Код компании', 'Модуль', 'Тип сущности', 'Название сущности', 'Название контрола', 'Guid', 'Путь']
@@ -250,7 +250,7 @@ class Property(BasicMTD):
         self.RootEntity = root_entity
         self.CollectionProperty = None
         self.CollectionEntity = None
-        super().__init__(item)
+        super().__init__(item, root_entity=root_entity)
 
     def parse(self):
         super().parse()
@@ -295,6 +295,41 @@ class Property(BasicMTD):
                     path  # Путь
                     ]
         return response
+
+
+class RibbonActionButtonMetadata(BasicMTD):
+    ActionGuid = None
+
+    def __init__(self, item: dict, root_entity):
+        self._action = None
+        super().__init__(item, root_entity=root_entity)
+
+    @property
+    def Action(self):
+        if not self._action:
+            self._action = Singleton().entity.get(self.ActionGuid)
+        return self._action
+
+    def ExcelHeaders(self) -> List[str]:
+        return ['Тип', 'Код компании', 'Модуль', 'Тип сущности', 'Название', 'Контрол', 'Guid контрола', 'Действие', 'Guid действия', 'Путь']
+
+    def ExcelData(self) -> List[str]:
+        root = self.RootEntity
+        response = [self.type,  # Тип
+                    root.Module.CompanyCode if root else '---',  # Код компании
+                    root.Module.Name if root else '---',  # Модуль
+                    root.MtdType if root else '---',  # Тип сущности
+                    root.Name if root else '---',  # Название
+                    self.Name,  # Контрол
+                    self.NameGuid,  # Guid контрола
+                    self.Action.Name if self.Action else '---',  # Действие
+                    self.Action.NameGuid if self.Action else '---',  # Guid действия
+                    root.path if root else '---'  # Guid
+                    ]
+        return response
+
+
+
 
 
 class Solution(BaseMTD):
@@ -443,7 +478,7 @@ class DataBook(BaseMTD):
         self.Operations = []
         self.Overridden = []
         self.Properties = []
-        self.RibbonCardMetadata = []
+        self.RibbonCard = []
         self.RibbonCollectionMetadata = []
         self.Module = None
         super().__init__(json_str, en_res, ru_res)
@@ -461,6 +496,9 @@ class DataBook(BaseMTD):
 
         for action in self.json.get("Actions", []):
             self.Actions.append(Action(action, self))
+
+        for ribbon in self.json.get("RibbonCardMetadata",{}).get('Elements',[]):
+            self.RibbonCard.append(RibbonActionButtonMetadata(ribbon, self))
 
         for prop in self.json.get("Properties", []):
             self.Properties.append(Property(prop, self))
@@ -573,7 +611,7 @@ def parse_file(path, module=None):
     return response
 
 
-def dir_walk(repo_path: str):
+def dir_walk(repo_path: str, only_module=False, repo_type='Base'):
     result = {}
     archive = []
 
@@ -587,6 +625,10 @@ def dir_walk(repo_path: str):
 
         #  каталог решения / модуля
         is_archive = 'VersionData' in path
+
+        if is_archive and only_module:
+            continue
+
         if 'Module.mtd' in files:
             response = parse_file(os.path.join(path, 'Module.mtd'), 'Module.mtd')
             if not response:
@@ -598,6 +640,7 @@ def dir_walk(repo_path: str):
                 print("ERROR", path)
 
             response.IsArchive = is_archive
+            response.repo_type = repo_type
 
             if is_archive:
                 archive.append(response)
@@ -605,6 +648,10 @@ def dir_walk(repo_path: str):
                 result[response.NameGuid] = response
 
             skip_path = path
+
+            # ускоренная пробежка
+            if only_module:
+                continue
 
             for folder in folders:
                 subpath = os.path.join(path, folder)
@@ -668,13 +715,17 @@ def render_excel(data, archive, filename):
     # Справочники, Документы, Задачи, Задания, Уведомления, Отчеты
     sheet = wb.add_worksheet("Сущности")
     rows = [x for x in data if
-            isinstance(x, (DataBook, Document, Task, Assignment, Notice, Report)) and not isinstance(x, Collection)]
+            isinstance(x, (DataBook, Document, Task, Assignment, Notice, Report, Collection))]
     render_excel_sheet(rows, sheet, header_format)
 
     actions = []
+    buttons = []
     properties = []
     controls = []
     for item in rows:
+        for button in item.RibbonCard:
+            buttons.append(button)
+
         for acti in item.Actions:
             actions.append(acti)
 
@@ -683,6 +734,10 @@ def render_excel(data, archive, filename):
 
         for cont in item.Controls:
             controls.append(cont)
+
+    # Действия
+    sheet = wb.add_worksheet("Кнопки")
+    render_excel_sheet(buttons, sheet, header_format)
 
     # Действия
     sheet = wb.add_worksheet("Действия")
@@ -754,11 +809,86 @@ def render_excel_sheet_archive(rows: List[BaseMTD], sheet, header_format):
         sheet.autofit()
 
 
-if __name__ == "__main__":
-    result = []
-    result.append(parse_file(r"C:\Storage\git_repository\work\Starkov.Main\Starkov.Main.Shared\Module.mtd"))
-    result.append(parse_file(r"c:\Storage\git_repository\base\Sungero.Company\Sungero.Company.Shared\Module.mtd"))
-    result.append(parse_file(r"c:\Storage\git_repository\work\Starkov.RMK\Starkov.RMK.Shared\Sungero.Company\Module.mtd"))
+def gen_package(filename, repos):
+    modules = []
+    for repo in repos:
+        items, archive = dir_walk(repo['path'], True, repo['type'])
+        modules += [x for x in items.values() if isinstance(x, (Solution, Module))]
 
-    for item in result:
-        print(item, item.Locale('en'), item.Locale('ru'))
+    root = ET.Element('DevelopmentPackageInfo', attrib={'xmlns:xsd': "http://www.w3.org/2001/XMLSchema", 'xmlns:xsi': "http://www.w3.org/2001/XMLSchema-instance"})
+    genXlmElement(root, 'IsDebugPackage', 'true')
+    package_modules = ET.SubElement(root, 'PackageModules')
+
+    for module in modules:
+        pm = ET.SubElement(package_modules, 'PackageModuleItem')
+
+        genXlmElement(pm, 'Id', module.NameGuid)
+        genXlmElement(pm, 'Name', '{}.{}'.format(module.CompanyCode, module.Name))
+        genXlmElement(pm, 'Version', module.Version)
+        genXlmElement(pm, 'IncludeAssemblies', 'true')
+        genXlmElement(pm, 'IncludeSources', 'false')
+        if isinstance(module, Solution):
+            genXlmElement(pm, 'IsSolution', 'true')
+        else:
+            genXlmElement(pm, 'IsSolution', 'false')
+
+        if module.repo_type == 'Work':
+            genXlmElement(pm, 'IsPreviousLayerModule', 'false')
+        else:
+            genXlmElement(pm, 'IsPreviousLayerModule', 'true')
+
+    ET.indent(root)
+
+    with open(filename, 'w') as fp:
+        fp.write('<?xml version="1.0"?>\n')
+        fp.write(ET.tostring(root, encoding='unicode', method='xml'))
+
+    print('Saved to', filename)
+
+
+
+def genXlmElement(parent, name, text):
+    """ Синтаксический сахар - создание элемента сразу с текстом """
+    item = ET.SubElement(parent, name)
+    item.text = text
+
+
+def parse_command():
+    if len(sys.argv) < 3:
+        print("""Использование:
+1. Сгенерировать package.xml для DevelopmentStudio:
+python mtd.py gen_package package.xml Base=c:\GIT\Base "Base=c:\Git\Space Path" Work=C:\Git\Work
+
+2. Сгенерировать Excel файл с метаданными разработки:
+python mtd.py save_mtd_info filename.xlsx Base=c:\GIT\Base "Base=c:\Git\Space Path" Work=C:\Git\Work
+
+Формат опиcания репозиториев - Base|Work - тип, после знака "=" полный путь до каталога репозитория,
+если путь включает пробелы, то весь параметр заключается в кавычки.
+
+Для генерации Excel файла может дополнительно потребоваться установить xlsxwriter:
+pip3 install xlsxwriter""")
+        return
+
+    action = sys.argv[1]
+    filename = sys.argv[2]
+    repo_list = []
+    for i in range(2, len(sys.argv)):
+        repo = sys.argv[i]
+        if ('Base=' in repo or 'Work=' in repo) and len(repo) > 5:
+            repo_list.append({'type': repo[:4], 'path': repo[5:]})
+
+    if action == 'gen_package':
+        gen_package(filename, repo_list)
+
+    if action == 'save_mtd_info':
+        response = []
+        archive = []
+        for repo in repo_list:
+            items, arch = dir_walk(repo.get('path'))
+            response += items.values()
+            archive += arch
+        render_excel(response, archive, filename)
+
+
+if __name__ == "__main__":
+    parse_command()
