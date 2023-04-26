@@ -78,6 +78,7 @@ class MtdAnalyzer(BaseComponent):
         archive = []
         for repo in self._get_repo_list():
             items, arch = mtd.dir_walk(repo.get('path'))
+            print("Using repository: Type={}, path={}".format(repo.get('type'),repo.get('path')))
             response += items.values()
             archive += arch
 
@@ -96,7 +97,6 @@ class MtdAnalyzer(BaseComponent):
     def gen_package(self, filename: str):
         """ MTD. Создать package.xml для DDS. Параметр - имя файла.xml """
         mtd.gen_package(filename, self._get_repo_list())
-
 
 def init_plugin() -> None:
     """ Инициализировать плагин. """

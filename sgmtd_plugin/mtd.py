@@ -735,6 +735,9 @@ def render_excel(data, archive, filename):
         for cont in item.Controls:
             controls.append(cont)
 
+    sheet = wb.add_worksheet("Перекрытия")
+    render_excel_sheet_parent(rows, sheet, header_format, wb)
+
     # Действия
     sheet = wb.add_worksheet("Кнопки")
     render_excel_sheet(buttons, sheet, header_format)
@@ -809,6 +812,54 @@ def render_excel_sheet_archive(rows: List[BaseMTD], sheet, header_format):
         sheet.autofit()
 
 
+def render_excel_sheet_parent(rows: List[BaseMTD], sheet, header_format, workbook):
+    def get_uri(item: DataBook):
+        parts = []
+        if item.Module:
+            if isinstance(item.Module, Module) and item.Module.Solution:
+                parts.append(item.Module.Solution.Name)
+            parts.append(item.Module.Name)
+        parts.append(item.Name)
+
+        uri = ".".join(parts)
+        return "{}\n{}".format(uri, item.NameGuid)
+
+    wrap_format = workbook.add_format({'text_wrap': True})
+
+    len_headers = 0
+    headers = ['Version', 'Модуль', 'Имя', 'Уровней', 'Сущность', '<- Родитель 1', '<- Родитель 2',
+               '<- Родитель 3', '<- Родитель 4', '<- Родитель 5', '<- Родитель 6',
+               '<- Родитель 7', '<- Родитель 8', '<- Родитель 9', '<- Родитель 10', 'Path']
+
+    for row_num, r in enumerate([x for x in rows if isinstance(x, DataBook) and not isinstance(x, Collection)]):
+        if row_num == 0:
+            len_headers = len(headers)
+            sheet.write_row(0, 0, headers, header_format)
+
+        row = [r.Module.Version if r.Module else '---',
+               r.Module.Name if r.Module else '---',
+               r.Name, 0, get_uri(r)]
+
+        parent = r.Parent
+        levels = 0
+        while parent:
+            row.append(get_uri(parent))
+            if not parent.Parent:
+                row.append(parent.BaseGuid)
+            parent = parent.Parent
+            levels += 1
+
+        row[3] = levels
+        for i in range(len(headers)-len(row)-1):
+            row.append('...')
+        row.append(r.path)
+        sheet.write_row(row_num + 1, 0, row, wrap_format)
+
+    if rows and len_headers:
+        sheet.autofilter(0, 0, len(rows), len_headers - 1)
+        sheet.autofit()
+
+
 def gen_package(filename, repos):
     modules = []
     for repo in repos:
@@ -875,6 +926,7 @@ pip3 install xlsxwriter""")
     for i in range(2, len(sys.argv)):
         repo = sys.argv[i]
         if ('Base=' in repo or 'Work=' in repo) and len(repo) > 5:
+            print("Using repository: Type={}, path={}".format(repo.get('type'),repo.get('path')))
             repo_list.append({'type': repo[:4], 'path': repo[5:]})
 
     if action == 'gen_package':
